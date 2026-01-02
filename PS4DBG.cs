@@ -4,22 +4,23 @@ using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Threading;
+using System.Threading.Tasks;
 
-namespace libdebug {
+namespace libdebug
+{
+    public partial class PS4DBG
+    {
+        private readonly Socket sock = null;
+        private readonly IPEndPoint enp = null;
 
-    public partial class PS4DBG {
-        private Socket sock = null;
-        private IPEndPoint enp = null;
+        public bool IsConnected { get; private set; }
 
-        public bool IsConnected { get; private set; } = false;
-
-        public bool IsDebugging { get; private set; } = false;
+        public bool IsDebugging { get; private set; }
 
         public string Version { get; private set; } = "";
-        public int ExtFWVersion { get; private set; } = 0;
+        public int ExtFWVersion { get; private set; }
 
-        private Thread debugThread = null;
+        private Task debugThread = null;
 
         // some global values
         private const string LIBRARY_VERSION = "1.3";
@@ -203,8 +204,8 @@ namespace libdebug {
             return new IPAddress(broadcastAddress);
         }
 
-        private void SendCMDPacket(CMDS cmd, int length, params object[] fields) {
-            CMDPacket packet = new CMDPacket {
+        private async Task SendCMDPacket(CMDS cmd, int length, params object[] fields) {
+            var packet = new CMDPacket {
                 magic = CMD_PACKET_MAGIC,
                 cmd = (uint)cmd,
                 datalen = (uint)length
@@ -213,7 +214,7 @@ namespace libdebug {
             byte[] data = null;
 
             if (length > 0) {
-                MemoryStream rs = new MemoryStream();
+                using var rs = new MemoryStream();
                 foreach (object field in fields) {
                     byte[] bytes = null;
 
@@ -258,68 +259,57 @@ namespace libdebug {
                     }
 
                     if (bytes != null)
-                        rs.Write(bytes, 0, bytes.Length);
+                        await rs.WriteAsync(bytes);
                 }
 
                 data = rs.ToArray();
-                rs.Dispose();
             }
 
-            SendData(GetBytesFromObject(packet), CMD_PACKET_SIZE);
+            await SendDataAsync(GetBytesFromObject(packet), CMD_PACKET_SIZE);
 
             if (data != null) {
-                SendData(data, length);
+                await SendDataAsync(data, length);
             }
         }
 
-        private void SendData(byte[] data, int length) {
+        private async Task SendDataAsync(byte[] data, int length) {
             int left = length;
             int offset = 0;
-            int sent = 0;
 
-            while (left > 0) {
-                if (left > NET_MAX_LENGTH) {
-                    byte[] bytes = SubArray(data, offset, NET_MAX_LENGTH);
-                    sent = sock.Send(bytes, NET_MAX_LENGTH, SocketFlags.None);
-                } else {
-                    byte[] bytes = SubArray(data, offset, left);
-                    sent = sock.Send(bytes, left, SocketFlags.None);
-                }
+            while (left > 0)
+            {
+                int cSize = Math.Min(left, NET_MAX_LENGTH);
+
+                Memory<byte> chunk = data.AsMemory(offset, cSize);
+                int sent = await sock.SendAsync(chunk, SocketFlags.None);
 
                 offset += sent;
                 left -= sent;
             }
         }
 
-        private byte[] ReceiveData(int length) {
-            MemoryStream s = new MemoryStream();
-
+        private async Task<byte[]> ReceiveDataAsync(int length) {
             int left = length;
             int recv = 0;
-            byte[] b = new byte[NET_MAX_LENGTH];
+            byte[] data = new byte[length];
+
             while (left > 0) {
-                // adhere to length
-                recv = sock.Receive(b, Math.Min(left, NET_MAX_LENGTH), SocketFlags.None);
-                s.Write(b, 0, recv);
+                Memory<byte> chunk = data.AsMemory(recv, left);
+                recv = await sock.ReceiveAsync(chunk, SocketFlags.None);
                 left -= recv;
             }
-
-            byte[] data = s.ToArray();
-
-            s.Dispose();
-            //GC.Collect();
 
             return data;
         }
 
-        private CMD_STATUS ReceiveStatus() {
+        private async Task<CMD_STATUS> ReceiveStatusAsync() {
             byte[] status = new byte[4];
-            sock.Receive(status, 4, SocketFlags.None);
+            await sock.ReceiveAsync(status, SocketFlags.None);
             return (CMD_STATUS)BitConverter.ToUInt32(status, 0);
         }
 
-        private void CheckStatus(string str = "") {
-            CMD_STATUS status = ReceiveStatus();
+        private async Task CheckStatus(string str = "") {
+            CMD_STATUS status = await ReceiveStatusAsync();
             if (status != CMD_STATUS.CMD_SUCCESS) {
                 throw new Exception("libdbg status " + ((uint)status).ToString("X") + " " + str);
             }
@@ -365,7 +355,7 @@ namespace libdebug {
         /// <summary>
         /// Find the playstation ip
         /// </summary>
-        public static string FindPlayStation(int timeout = 100, string subnet_mask = "255.255.255.0") {
+        public static async Task<string> FindPlayStation(int timeout = 100, string subnet_mask = "255.255.255.0") {
             UdpClient uc = new UdpClient();
             IPEndPoint server = new IPEndPoint(IPAddress.Any, 0);
             uc.EnableBroadcast = true;
@@ -374,14 +364,14 @@ namespace libdebug {
             byte[] magic = BitConverter.GetBytes(BROADCAST_MAGIC);
 
             IPAddress addr = null;
-            IPHostEntry host = Dns.GetHostEntry(Dns.GetHostName());
+            IPHostEntry host = await Dns.GetHostEntryAsync(Dns.GetHostName());
             foreach (IPAddress ip in host.AddressList) {
                 if (ip.AddressFamily == AddressFamily.InterNetwork) {
                     addr = ip;
                     try {
-                        uc.Send(magic, magic.Length, new IPEndPoint(GetBroadcastAddress(addr, IPAddress.Parse(subnet_mask)), BROADCAST_PORT));
+                        await uc.SendAsync(magic, magic.Length, new IPEndPoint(GetBroadcastAddress(addr, IPAddress.Parse(subnet_mask)), BROADCAST_PORT));
 
-                        byte[] resp = uc.Receive(ref server);
+                        var resp = (await uc.ReceiveAsync()).Buffer;
                         if (BitConverter.ToUInt32(resp, 0) == BROADCAST_MAGIC)
                             return server.Address.ToString();
                     } catch (Exception ex) {
@@ -396,7 +386,7 @@ namespace libdebug {
         /// <summary>
         /// Connects to PlayStation 4
         /// </summary>
-        public bool Connect() {
+        public async Task<bool> ConnectAsync() {
             if (!IsConnected) {
                 sock.NoDelay = true;
                 sock.ReceiveBufferSize = NET_MAX_LENGTH;
@@ -406,7 +396,7 @@ namespace libdebug {
                 sock.ReceiveTimeout = 1000 * 10;
 
                 try {
-                    sock.Connect(enp);
+                    await sock.ConnectAsync(enp);
                     IsConnected = true;
                     Console.WriteLine("Connected!");
                 } catch (Exception ex) {
@@ -420,8 +410,8 @@ namespace libdebug {
         /// <summary>
         /// Disconnects from PlayStation 4
         /// </summary>
-        public bool Disconnect() {
-            SendCMDPacket(CMDS.CMD_CONSOLE_END, 0);
+        public async Task<bool> Disconnect() {
+            await SendCMDPacket(CMDS.CMD_CONSOLE_END, 0);
             try {
                 sock.Shutdown(SocketShutdown.Both);
                 sock.Close();
@@ -443,21 +433,21 @@ namespace libdebug {
         /// <summary>
         /// Get the current ps4debug version from console
         /// </summary>
-        public string GetConsoleDebugVersion() {
+        public async Task<string> GetConsoleDebugVersion() {
             if (Version != "")
                 return Version;
 
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_VERSION, 0);
+            await SendCMDPacket(CMDS.CMD_VERSION, 0);
 
             byte[] ldata = new byte[4];
-            sock.Receive(ldata, 4, SocketFlags.None);
+            await sock.ReceiveAsync(ldata, SocketFlags.None);
 
             int length = BitConverter.ToInt32(ldata, 0);
 
             byte[] data = new byte[length];
-            sock.Receive(data, length, SocketFlags.None);
+            await sock.ReceiveAsync(data, SocketFlags.None);
 
             Version = ConvertASCII(data, 0);
             return Version;

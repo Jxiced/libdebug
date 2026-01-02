@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 
 namespace libdebug {
 
@@ -18,12 +19,12 @@ namespace libdebug {
         /// Get kernel base address
         /// </summary>
         /// <returns></returns>
-        public ulong KernelBase() {
+        public async Task<ulong> KernelBase() {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_KERN_BASE, 0);
-            CheckStatus();
-            return BitConverter.ToUInt64(ReceiveData(KERN_BASE_SIZE), 0);
+            await SendCMDPacket(CMDS.CMD_KERN_BASE, 0);
+            await CheckStatus();
+            return BitConverter.ToUInt64(await ReceiveDataAsync(KERN_BASE_SIZE), 0);
         }
 
         /// <summary>
@@ -32,12 +33,12 @@ namespace libdebug {
         /// <param name="address">Memory address</param>
         /// <param name="length">Data length</param>
         /// <returns></returns>
-        public byte[] KernelReadMemory(ulong address, int length) {
+        public async Task<byte[]> KernelReadMemory(ulong address, int length) {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_KERN_READ, CMD_KERN_READ_PACKET_SIZE, address, length);
-            CheckStatus();
-            return ReceiveData(length);
+            await SendCMDPacket(CMDS.CMD_KERN_READ, CMD_KERN_READ_PACKET_SIZE, address, length);
+            await CheckStatus();
+            return await ReceiveDataAsync(length);
         }
 
         /// <summary>
@@ -45,13 +46,13 @@ namespace libdebug {
         /// </summary>
         /// <param name="address">Memory address</param>
         /// <param name="data">Data</param>
-        public void KernelWriteMemory(ulong address, byte[] data) {
+        public async Task KernelWriteMemory(ulong address, byte[] data) {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_KERN_WRITE, CMD_KERN_WRITE_PACKET_SIZE, address, data.Length);
-            CheckStatus();
-            SendData(data, data.Length);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_KERN_WRITE, CMD_KERN_WRITE_PACKET_SIZE, address, data.Length);
+            await CheckStatus();
+            await SendDataAsync(data, data.Length);
+            await CheckStatus();
         }
     }
 }

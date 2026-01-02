@@ -1,4 +1,5 @@
 using System.Text;
+using System.Threading.Tasks;
 
 namespace libdebug {
 
@@ -16,47 +17,47 @@ namespace libdebug {
         /// <summary>
         /// Reboot console
         /// </summary>
-        public void Reboot() {
+        public async Task Reboot() {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_CONSOLE_REBOOT, 0);
+            await SendCMDPacket(CMDS.CMD_CONSOLE_REBOOT, 0);
             IsConnected = false;
         }
 
         /// <summary>
         /// Print to serial port
         /// </summary>
-        public void Print(string str) {
+        public async Task Print(string str) {
             CheckConnected();
 
             string raw = str + "\0";
 
-            SendCMDPacket(CMDS.CMD_CONSOLE_PRINT, CMD_CONSOLE_PRINT_PACKET_SIZE, raw.Length);
-            SendData(Encoding.ASCII.GetBytes(raw), raw.Length);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_CONSOLE_PRINT, CMD_CONSOLE_PRINT_PACKET_SIZE, raw.Length);
+            await SendDataAsync(Encoding.ASCII.GetBytes(raw), raw.Length);
+            await CheckStatus();
         }
 
         /// <summary>
         /// Notify console
         /// </summary>
-        public void Notify(int messageType, string message) {
+        public async Task Notify(int messageType, string message) {
             CheckConnected();
 
             string raw = message + "\0";
 
-            SendCMDPacket(CMDS.CMD_CONSOLE_NOTIFY, CMD_CONSOLE_NOTIFY_PACKET_SIZE, messageType, raw.Length);
-            SendData(Encoding.ASCII.GetBytes(raw), raw.Length);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_CONSOLE_NOTIFY, CMD_CONSOLE_NOTIFY_PACKET_SIZE, messageType, raw.Length);
+            await SendDataAsync(Encoding.ASCII.GetBytes(raw), raw.Length);
+            await CheckStatus();
         }
 
         /// <summary>
         /// Console information
         /// </summary>
-        public void GetConsoleInformation() {
+        public async Task GetConsoleInformation() {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_CONSOLE_INFO, 0);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_CONSOLE_INFO, 0);
+            await CheckStatus();
 
             // TODO return the data
         }

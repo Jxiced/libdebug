@@ -3,11 +3,12 @@ using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 
-namespace libdebug {
-
-    public partial class PS4DBG {
-
+namespace libdebug
+{
+    public partial class PS4DBG
+    {
         //debug
         // packet sizes
         //send size
@@ -56,7 +57,7 @@ namespace libdebug {
         /// <param name="dbregs">Debug registers</param>
         public delegate void DebuggerInterruptCallback(uint lwpid, uint status, string tdname, regs regs, fpregs fpregs, dbregs dbregs);
 
-        private void DebuggerThread(object obj) {
+        private async Task DebuggerThread(object obj) {
             DebuggerInterruptCallback callback = (DebuggerInterruptCallback)obj;
 
             IPAddress ip = IPAddress.Parse("0.0.0.0");
@@ -69,7 +70,7 @@ namespace libdebug {
 
             IsDebugging = true;
 
-            Socket cl = server.Accept();
+            Socket cl = await server.AcceptAsync();
 
             cl.NoDelay = true;
             cl.Blocking = false;
@@ -77,14 +78,14 @@ namespace libdebug {
             while (IsDebugging) {
                 if (cl.Available == DEBUG_INTERRUPT_SIZE) {
                     byte[] data = new byte[DEBUG_INTERRUPT_SIZE];
-                    int bytes = cl.Receive(data, DEBUG_INTERRUPT_SIZE, SocketFlags.None);
+                    int bytes = await cl.ReceiveAsync(data, SocketFlags.None);
                     if (bytes == DEBUG_INTERRUPT_SIZE) {
                         DebuggerInterruptPacket packet = (DebuggerInterruptPacket)GetObjectFromBytes(data, typeof(DebuggerInterruptPacket));
                         callback(packet.lwpid, packet.status, packet.tdname, packet.reg64, packet.savefpu, packet.dbreg64);
                     }
                 }
 
-                Thread.Sleep(100);
+                await Task.Delay(100);
             }
 
             server.Close();
@@ -96,7 +97,7 @@ namespace libdebug {
         /// <param name="pid">Process ID</param>
         /// <param name="callback">DebuggerInterruptCallback implementation</param>
         /// <returns></returns>
-        public void AttachDebugger(int pid, DebuggerInterruptCallback callback) {
+        public async Task AttachDebugger(int pid, DebuggerInterruptCallback callback) {
             CheckConnected();
 
             if (IsDebugging || debugThread != null) {
@@ -105,32 +106,32 @@ namespace libdebug {
 
             IsDebugging = false;
 
-            debugThread = new Thread(DebuggerThread) { IsBackground = true };
-            debugThread.Start(callback);
+            debugThread = Task.Run(() => DebuggerThread(callback));
 
             // wait until server is started
             while (!IsDebugging) {
-                Thread.Sleep(100);
+                await Task.Delay(100);
             }
 
-            SendCMDPacket(CMDS.CMD_DEBUG_ATTACH, CMD_DEBUG_ATTACH_PACKET_SIZE, pid);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_ATTACH, CMD_DEBUG_ATTACH_PACKET_SIZE, pid);
+            await CheckStatus();
         }
 
         /// <summary>
         /// Detach the debugger
         /// </summary>
         /// <returns></returns>
-        public void DetachDebugger() {
+        public async Task DetachDebugger() {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_DETACH, 0);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_DETACH, 0);
+            await CheckStatus();
 
             if (IsDebugging && debugThread != null) {
                 IsDebugging = false;
 
-                debugThread.Join();
+                await debugThread;
+
                 debugThread = null;
             }
         }
@@ -139,51 +140,52 @@ namespace libdebug {
         /// Stop the current process
         /// </summary>
         /// <returns></returns>
-        public void ProcessStop() {
+        public async Task ProcessStop() {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_STOPGO, CMD_DEBUG_STOPGO_PACKET_SIZE, 1);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_STOPGO, CMD_DEBUG_STOPGO_PACKET_SIZE, 1);
+            await CheckStatus();
         }
 
         /// <summary>
         /// Kill the current process, it will detach before doing so
         /// </summary>
         /// <returns></returns>
-        public void ProcessKill() {
+        public async Task ProcessKill() {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_STOPGO, CMD_DEBUG_STOPGO_PACKET_SIZE, 2);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_STOPGO, CMD_DEBUG_STOPGO_PACKET_SIZE, 2);
+            await CheckStatus();
         }
 
         /// <summary>
         /// Resume the current process
         /// </summary>
         /// <returns></returns>
-        public void ProcessResume() {
+        public async Task ProcessResume() {
             CheckConnected();
             CheckDebugging();
-
-            SendCMDPacket(CMDS.CMD_DEBUG_STOPGO, CMD_DEBUG_STOPGO_PACKET_SIZE, 0);
-            CheckStatus();
+            
+            await SendCMDPacket(CMDS.CMD_DEBUG_STOPGO, CMD_DEBUG_STOPGO_PACKET_SIZE, 0);
+            await CheckStatus();
         }
 
-        public int GetExtFWVersion() {
+        public async Task<int> GetExtFWVersion() {
             if (ExtFWVersion != 0)
                 return ExtFWVersion;
 
-            try {
+            try
+            {
                 CheckConnected();
 
-                SendCMDPacket(CMDS.CMD_EXT_FW_VERSION, 0);
+                await SendCMDPacket(CMDS.CMD_EXT_FW_VERSION, 0);
                 int save = sock.ReceiveTimeout;
                 sock.ReceiveTimeout = 10000;
 
                 byte[] ldata = new byte[2];
-                sock.Receive(ldata, 2, SocketFlags.None);
+                await sock.ReceiveAsync(ldata, SocketFlags.None);
 
                 ExtFWVersion = BitConverter.ToUInt16(ldata, 0);
                 Console.WriteLine("Console Version: " + ExtFWVersion);
@@ -196,34 +198,34 @@ namespace libdebug {
             }
         }
 
-        public void ProcessExtStop(int pid) {
+        public async Task ProcessExtStop(int pid) {
             try {
                 CheckConnected();
 
-                SendCMDPacket(CMDS.CMD_DEBUG_EXT_STOPGO, CMD_DEBUG_EXT_STOPGO_PACKET_SIZE, (uint)pid, (byte)1);
-                CheckStatus();
+                await SendCMDPacket(CMDS.CMD_DEBUG_EXT_STOPGO, CMD_DEBUG_EXT_STOPGO_PACKET_SIZE, (uint)pid, (byte)1);
+                await CheckStatus();
             } catch (Exception e) {
                 Console.WriteLine(e);
             }
         }
 
-        public void ProcessExtResume(int pid) {
+        public async Task ProcessExtResume(int pid) {
             try {
                 CheckConnected();
 
-                SendCMDPacket(CMDS.CMD_DEBUG_EXT_STOPGO, CMD_DEBUG_EXT_STOPGO_PACKET_SIZE, (uint)pid, (byte)0);
-                CheckStatus();
+                await SendCMDPacket(CMDS.CMD_DEBUG_EXT_STOPGO, CMD_DEBUG_EXT_STOPGO_PACKET_SIZE, (uint)pid, (byte)0);
+                await CheckStatus();
             } catch (Exception e) {
                 Console.WriteLine(e);
             }
         }
 
-        public void ProcessExtKill(int pid) {
+        public async Task ProcessExtKill(int pid) {
             try {
                 CheckConnected();
 
-                SendCMDPacket(CMDS.CMD_DEBUG_EXT_STOPGO, CMD_DEBUG_EXT_STOPGO_PACKET_SIZE, (uint)pid, (byte)2);
-                CheckStatus();
+                await SendCMDPacket(CMDS.CMD_DEBUG_EXT_STOPGO, CMD_DEBUG_EXT_STOPGO_PACKET_SIZE, (uint)pid, (byte)2);
+                await CheckStatus();
             } catch (Exception e) {
                 Console.WriteLine(e);
             }
@@ -236,7 +238,7 @@ namespace libdebug {
         /// <param name="enabled">Enabled</param>
         /// <param name="address">Address</param>
         /// <returns></returns>
-        public void ChangeBreakpoint(int index, bool enabled, ulong address) {
+        public async Task ChangeBreakpoint(int index, bool enabled, ulong address) {
             CheckConnected();
             CheckDebugging();
 
@@ -244,8 +246,8 @@ namespace libdebug {
                 throw new Exception("libdbg: breakpoint index out of range");
             }
 
-            SendCMDPacket(CMDS.CMD_DEBUG_BREAKPT, CMD_DEBUG_BREAKPT_PACKET_SIZE, index, Convert.ToInt32(enabled), address);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_BREAKPT, CMD_DEBUG_BREAKPT_PACKET_SIZE, index, Convert.ToInt32(enabled), address);
+            await CheckStatus();
         }
 
         /// <summary>
@@ -257,7 +259,7 @@ namespace libdebug {
         /// <param name="breaktype">Break type</param>
         /// <param name="address">Address</param>
         /// <returns></returns>
-        public void ChangeWatchpoint(int index, bool enabled, WATCHPT_LENGTH length, WATCHPT_BREAKTYPE breaktype, ulong address) {
+        public async Task ChangeWatchpoint(int index, bool enabled, WATCHPT_LENGTH length, WATCHPT_BREAKTYPE breaktype, ulong address) {
             CheckConnected();
             CheckDebugging();
 
@@ -265,26 +267,26 @@ namespace libdebug {
                 throw new Exception("libdbg: watchpoint index out of range");
             }
 
-            SendCMDPacket(CMDS.CMD_DEBUG_WATCHPT, CMD_DEBUG_WATCHPT_PACKET_SIZE, index, Convert.ToInt32(enabled), (uint)length, (uint)breaktype, address);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_WATCHPT, CMD_DEBUG_WATCHPT_PACKET_SIZE, index, Convert.ToInt32(enabled), (uint)length, (uint)breaktype, address);
+            await CheckStatus();
         }
 
         /// <summary>
         /// Get a list of threads from the current process
         /// </summary>
         /// <returns></returns>
-        public uint[] GetThreadList() {
+        public async Task<uint[]> GetThreadList() {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_THREADS, 0);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_THREADS, 0);
+            await CheckStatus();
 
             byte[] data = new byte[sizeof(int)];
             sock.Receive(data, sizeof(int), SocketFlags.None);
             int number = BitConverter.ToInt32(data, 0);
 
-            byte[] threads = ReceiveData(number * sizeof(uint));
+            byte[] threads = await ReceiveDataAsync(number * sizeof(uint));
             uint[] thrlist = new uint[number];
             for (int i = 0; i < number; i++) {
                 thrlist[i] = BitConverter.ToUInt32(threads, i * sizeof(uint));
@@ -298,14 +300,14 @@ namespace libdebug {
         /// </summary>
         /// <returns></returns>
         /// <param name="lwpid">Thread identifier</param>
-        public ThreadInfo GetThreadInfo(uint lwpid) {
+        public async Task<ThreadInfo> GetThreadInfo(uint lwpid) {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_THRINFO, CMD_DEBUG_THRINFO_PACKET_SIZE, lwpid);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_THRINFO, CMD_DEBUG_THRINFO_PACKET_SIZE, lwpid);
+            await CheckStatus();
 
-            return (ThreadInfo)GetObjectFromBytes(ReceiveData(DEBUG_THRINFO_SIZE), typeof(ThreadInfo));
+            return (ThreadInfo)GetObjectFromBytes(await ReceiveDataAsync(DEBUG_THRINFO_SIZE), typeof(ThreadInfo));
         }
 
         /// <summary>
@@ -313,12 +315,12 @@ namespace libdebug {
         /// </summary>
         /// <param name="lwpid">Thread id</param>
         /// <returns></returns>
-        public void StopThread(uint lwpid) {
+        public async Task StopThread(uint lwpid) {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_STOPTHR, CMD_DEBUG_STOPTHR_PACKET_SIZE, lwpid);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_STOPTHR, CMD_DEBUG_STOPTHR_PACKET_SIZE, lwpid);
+            await CheckStatus();
         }
 
         /// <summary>
@@ -326,12 +328,12 @@ namespace libdebug {
         /// </summary>
         /// <param name="lwpid">Thread id</param>
         /// <returns></returns>
-        public void ResumeThread(uint lwpid) {
+        public async Task ResumeThread(uint lwpid) {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_RESUMETHR, CMD_DEBUG_RESUMETHR_PACKET_SIZE, lwpid);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_RESUMETHR, CMD_DEBUG_RESUMETHR_PACKET_SIZE, lwpid);
+            await CheckStatus();
         }
 
         /// <summary>
@@ -339,14 +341,14 @@ namespace libdebug {
         /// </summary>
         /// <param name="lwpid">Thread id</param>
         /// <returns></returns>
-        public regs GetRegisters(uint lwpid) {
+        public async Task<regs> GetRegisters(uint lwpid) {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_GETREGS, CMD_DEBUG_GETREGS_PACKET_SIZE, lwpid);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_GETREGS, CMD_DEBUG_GETREGS_PACKET_SIZE, lwpid);
+            await CheckStatus();
 
-            return (regs)GetObjectFromBytes(ReceiveData(DEBUG_REGS_SIZE), typeof(regs));
+            return (regs)GetObjectFromBytes(await ReceiveDataAsync(DEBUG_REGS_SIZE), typeof(regs));
         }
 
         /// <summary>
@@ -355,14 +357,14 @@ namespace libdebug {
         /// <param name="lwpid">Thread id</param>
         /// <param name="regs">Register data</param>
         /// <returns></returns>
-        public void SetRegisters(uint lwpid, regs regs) {
+        public async Task SetRegisters(uint lwpid, regs regs) {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_SETREGS, CMD_DEBUG_SETREGS_PACKET_SIZE, lwpid, DEBUG_REGS_SIZE);
-            CheckStatus();
-            SendData(GetBytesFromObject(regs), DEBUG_REGS_SIZE);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_SETREGS, CMD_DEBUG_SETREGS_PACKET_SIZE, lwpid, DEBUG_REGS_SIZE);
+            await CheckStatus();
+            await SendDataAsync(GetBytesFromObject(regs), DEBUG_REGS_SIZE);
+            await CheckStatus();
         }
 
         /// <summary>
@@ -370,14 +372,14 @@ namespace libdebug {
         /// </summary>
         /// <param name="lwpid">Thread id</param>
         /// <returns></returns>
-        public fpregs GetFloatRegisters(uint lwpid) {
+        public async Task<fpregs> GetFloatRegisters(uint lwpid) {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_GETFPREGS, CMD_DEBUG_GETREGS_PACKET_SIZE, lwpid);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_GETFPREGS, CMD_DEBUG_GETREGS_PACKET_SIZE, lwpid);
+            await CheckStatus();
 
-            return (fpregs)GetObjectFromBytes(ReceiveData(DEBUG_FPREGS_SIZE), typeof(fpregs));
+            return (fpregs)GetObjectFromBytes(await ReceiveDataAsync(DEBUG_FPREGS_SIZE), typeof(fpregs));
         }
 
         /// <summary>
@@ -386,14 +388,14 @@ namespace libdebug {
         /// <param name="lwpid">Thread id</param>
         /// <param name="fpregs">Floating point register data</param>
         /// <returns></returns>
-        public void SetFloatRegisters(uint lwpid, fpregs fpregs) {
+        public async Task SetFloatRegisters(uint lwpid, fpregs fpregs) {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_SETFPREGS, CMD_DEBUG_SETREGS_PACKET_SIZE, lwpid, DEBUG_FPREGS_SIZE);
-            CheckStatus();
-            SendData(GetBytesFromObject(fpregs), DEBUG_FPREGS_SIZE);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_SETFPREGS, CMD_DEBUG_SETREGS_PACKET_SIZE, lwpid, DEBUG_FPREGS_SIZE);
+            await CheckStatus();
+            await SendDataAsync(GetBytesFromObject(fpregs), DEBUG_FPREGS_SIZE);
+            await CheckStatus();
         }
 
         /// <summary>
@@ -401,14 +403,14 @@ namespace libdebug {
         /// </summary>
         /// <param name="lwpid">Thread id</param>
         /// <returns></returns>
-        public dbregs GetDebugRegisters(uint lwpid) {
+        public async Task<dbregs> GetDebugRegisters(uint lwpid) {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_GETDBGREGS, CMD_DEBUG_GETREGS_PACKET_SIZE, lwpid);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_GETDBGREGS, CMD_DEBUG_GETREGS_PACKET_SIZE, lwpid);
+            await CheckStatus();
 
-            return (dbregs)GetObjectFromBytes(ReceiveData(DEBUG_DBGREGS_SIZE), typeof(dbregs));
+            return (dbregs)GetObjectFromBytes(await ReceiveDataAsync(DEBUG_DBGREGS_SIZE), typeof(dbregs));
         }
 
         /// <summary>
@@ -417,25 +419,25 @@ namespace libdebug {
         /// <param name="lwpid">Thread id</param>
         /// <param name="dbregs">debug register data</param>
         /// <returns></returns>
-        public void SetDebugRegisters(uint lwpid, dbregs dbregs) {
+        public async Task SetDebugRegisters(uint lwpid, dbregs dbregs) {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_SETDBGREGS, CMD_DEBUG_SETREGS_PACKET_SIZE, lwpid, DEBUG_DBGREGS_SIZE);
-            CheckStatus();
-            SendData(GetBytesFromObject(dbregs), DEBUG_DBGREGS_SIZE);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_SETDBGREGS, CMD_DEBUG_SETREGS_PACKET_SIZE, lwpid, DEBUG_DBGREGS_SIZE);
+            await CheckStatus();
+            await SendDataAsync(GetBytesFromObject(dbregs), DEBUG_DBGREGS_SIZE);
+            await CheckStatus();
         }
 
         /// <summary>
         /// Executes a single instruction
         /// </summary>
-        public void SingleStep() {
+        public async Task SingleStep() {
             CheckConnected();
             CheckDebugging();
 
-            SendCMDPacket(CMDS.CMD_DEBUG_SINGLESTEP, 0);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_DEBUG_SINGLESTEP, 0);
+            await CheckStatus();
         }
     }
 }

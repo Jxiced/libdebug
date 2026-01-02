@@ -4,6 +4,7 @@ using System.IO;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading.Tasks;
 
 namespace libdebug {
 
@@ -102,12 +103,12 @@ namespace libdebug {
         /// <param name="pid">Process ID</param>
         /// <param name="length">Size of memory allocation</param>
         /// <returns></returns>
-        public ulong AllocateMemory(int pid, int length) {
+        public async Task<ulong> AllocateMemory(int pid, int length) {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_PROC_ALLOC, CMD_PROC_ALLOC_PACKET_SIZE, pid, length);
-            CheckStatus();
-            return BitConverter.ToUInt64(ReceiveData(PROC_ALLOC_SIZE), 0);
+            await SendCMDPacket(CMDS.CMD_PROC_ALLOC, CMD_PROC_ALLOC_PACKET_SIZE, pid, length);
+            await CheckStatus();
+            return BitConverter.ToUInt64(await ReceiveDataAsync(PROC_ALLOC_SIZE), 0);
         }
 
         /// <summary>
@@ -118,7 +119,7 @@ namespace libdebug {
         /// <param name="address">Address to call</param>
         /// <param name="args">Arguments array</param>
         /// <returns></returns>
-        public ulong Call(int pid, ulong rpcstub, ulong address, params object[] args) {
+        public async Task<ulong> Call(int pid, ulong rpcstub, ulong address, params object[] args) {
             CheckConnected();
 
             // need to do this in a custom format
@@ -127,12 +128,13 @@ namespace libdebug {
                 cmd = (uint)CMDS.CMD_PROC_CALL,
                 datalen = (uint)CMD_PROC_CALL_PACKET_SIZE
             };
-            SendData(GetBytesFromObject(packet), CMD_PACKET_SIZE);
 
-            MemoryStream rs = new MemoryStream();
-            rs.Write(BitConverter.GetBytes(pid), 0, sizeof(int));
-            rs.Write(BitConverter.GetBytes(rpcstub), 0, sizeof(ulong));
-            rs.Write(BitConverter.GetBytes(address), 0, sizeof(ulong));
+            await SendDataAsync(GetBytesFromObject(packet), CMD_PACKET_SIZE);
+
+            using MemoryStream rs = new MemoryStream();
+            await rs.WriteAsync(BitConverter.GetBytes(pid), 0, sizeof(int));
+            await rs.WriteAsync(BitConverter.GetBytes(rpcstub), 0, sizeof(ulong));
+            await rs.WriteAsync(BitConverter.GetBytes(address), 0, sizeof(ulong));
 
             int num = 0;
             foreach (object arg in args) {
@@ -199,7 +201,7 @@ namespace libdebug {
                     }
                 }
 
-                rs.Write(bytes, 0, bytes.Length);
+                await rs.WriteAsync(bytes, 0, bytes.Length);
                 num++;
             }
 
@@ -209,16 +211,15 @@ namespace libdebug {
 
             if (num < 6) {
                 for (int i = 0; i < (6 - num); i++) {
-                    rs.Write(BitConverter.GetBytes((ulong)0), 0, sizeof(ulong));
+                    await rs.WriteAsync(BitConverter.GetBytes((ulong)0), 0, sizeof(ulong));
                 }
             }
 
-            SendData(rs.ToArray(), CMD_PROC_CALL_PACKET_SIZE);
-            rs.Dispose();
+            await SendDataAsync(rs.ToArray(), CMD_PROC_CALL_PACKET_SIZE);
 
-            CheckStatus();
+            await CheckStatus();
 
-            byte[] data = ReceiveData(PROC_CALL_SIZE);
+            byte[] data = await ReceiveDataAsync(PROC_CALL_SIZE);
             return BitConverter.ToUInt64(data, 4);
         }
 
@@ -230,11 +231,11 @@ namespace libdebug {
         /// <param name="length">Length</param>
         /// <param name="newprot">New protection</param>
         /// <returns></returns>
-        public void ChangeProtection(int pid, ulong address, uint length, VM_PROTECTIONS newProt) {
+        public async Task ChangeProtection(int pid, ulong address, uint length, VM_PROTECTIONS newProt) {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_PROC_PROTECT, CMD_PROC_PROTECT_PACKET_SIZE, pid, address, length, (uint)newProt);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_PROC_PROTECT, CMD_PROC_PROTECT_PACKET_SIZE, pid, address, length, (uint)newProt);
+            await CheckStatus();
         }
 
         /// <summary>
@@ -244,11 +245,11 @@ namespace libdebug {
         /// <param name="address">Address of the memory allocation</param>
         /// <param name="length">Size of memory allocation</param>
         /// <returns></returns>
-        public void FreeMemory(int pid, ulong address, int length) {
+        public async Task FreeMemory(int pid, ulong address, int length) {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_PROC_FREE, CMD_PROC_FREE_PACKET_SIZE, pid, address, length);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_PROC_FREE, CMD_PROC_FREE_PACKET_SIZE, pid, address, length);
+            await CheckStatus();
         }
 
         /// <summary>
@@ -256,13 +257,13 @@ namespace libdebug {
         /// </summary>
         /// <param name="pid">Process ID</param>
         /// <returns></returns>
-        public ProcessInfo GetProcessInfo(int pid) {
+        public async Task<ProcessInfo> GetProcessInfo(int pid) {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_PROC_INFO, CMD_PROC_INFO_PACKET_SIZE, pid);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_PROC_INFO, CMD_PROC_INFO_PACKET_SIZE, pid);
+            await CheckStatus();
 
-            byte[] data = ReceiveData(PROC_PROC_INFO_SIZE);
+            byte[] data = await ReceiveDataAsync(PROC_PROC_INFO_SIZE);
             return (ProcessInfo)GetObjectFromBytes(data, typeof(ProcessInfo));
         }
 
@@ -270,12 +271,12 @@ namespace libdebug {
         /// Get current process list
         /// </summary>
         /// <returns>A ProcessList object containing process names and IDs</returns>
-        public ProcessList GetProcessList() {
+        public async Task<ProcessList> GetProcessList() {
             CheckConnected();
 
             // Send command packet to request process list
-            SendCMDPacket(CMDS.CMD_PROC_LIST, 0);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_PROC_LIST, 0);
+            await CheckStatus();
 
             // Receive the count of processes
             byte[] countBytes = new byte[4];
@@ -283,7 +284,7 @@ namespace libdebug {
             int number = BitConverter.ToInt32(countBytes, 0);
 
             // Receive data containing process names and IDs
-            byte[] processData = ReceiveData(number * PROC_LIST_ENTRY_SIZE);
+            byte[] processData = await ReceiveDataAsync(number * PROC_LIST_ENTRY_SIZE);
 
             // Array for Process Names
             string[] names = new string[number];
@@ -310,11 +311,11 @@ namespace libdebug {
         /// </summary>
         /// <param name="pid">Process ID</param>
         /// <returns></returns>
-        public ProcessMap GetProcessMaps(int pid) {
+        public async Task<ProcessMap> GetProcessMaps(int pid) {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_PROC_MAPS, CMD_PROC_MAPS_PACKET_SIZE, pid);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_PROC_MAPS, CMD_PROC_MAPS_PACKET_SIZE, pid);
+            await CheckStatus();
 
             // recv count
             byte[] bnumber = new byte[4];
@@ -322,7 +323,7 @@ namespace libdebug {
             int number = BitConverter.ToInt32(bnumber, 0);
 
             // recv data
-            byte[] data = ReceiveData(number * PROC_MAP_ENTRY_SIZE);
+            byte[] data = await ReceiveDataAsync(number * PROC_MAP_ENTRY_SIZE);
 
             // parse data
             MemoryEntry[] entries = new MemoryEntry[number];
@@ -345,13 +346,13 @@ namespace libdebug {
         /// </summary>
         /// <param name="pid">Process ID</param>
         /// <returns></returns>
-        public ulong InstallRPC(int pid) {
+        public async Task<ulong> InstallRPC(int pid) {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_PROC_INTALL, CMD_PROC_INSTALL_PACKET_SIZE, pid);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_PROC_INTALL, CMD_PROC_INSTALL_PACKET_SIZE, pid);
+            await CheckStatus();
 
-            return BitConverter.ToUInt64(ReceiveData(PROC_INSTALL_SIZE), 0);
+            return BitConverter.ToUInt64(await ReceiveDataAsync(PROC_INSTALL_SIZE), 0);
         }
 
         /// <summary>
@@ -359,13 +360,13 @@ namespace libdebug {
         /// </summary>
         /// <param name="pid">Process ID</param>
         /// <param name="elf">Elf</param>
-        public void LoadElf(int pid, byte[] elf) {
+        public async Task LoadElf(int pid, byte[] elf) {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_PROC_ELF, CMD_PROC_ELF_PACKET_SIZE, pid, (uint)elf.Length);
-            CheckStatus();
-            SendData(elf, elf.Length);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_PROC_ELF, CMD_PROC_ELF_PACKET_SIZE, pid, (uint)elf.Length);
+            await CheckStatus();
+            await SendDataAsync(elf, elf.Length);
+            await CheckStatus();
         }
 
         /// <summary>
@@ -373,8 +374,8 @@ namespace libdebug {
         /// </summary>
         /// <param name="pid">Process ID</param>
         /// <param name="filename">Elf filename</param>
-        public void LoadElf(int pid, string filename) {
-            LoadElf(pid, File.ReadAllBytes(filename));
+        public async Task LoadElf(int pid, string filename) {
+            await LoadElf(pid, await File.ReadAllBytesAsync(filename));
         }
 
         /// <summary>
@@ -384,21 +385,21 @@ namespace libdebug {
         /// <param name="address">Memory address</param>
         /// <param name="length">Data length</param>
         /// <returns></returns>
-        public byte[] ReadMemory(int pid, ulong address, int length) {
+        public async Task<byte[]> ReadMemory(int pid, ulong address, int length) {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_PROC_READ, CMD_PROC_READ_PACKET_SIZE, pid, address, length);
-            CheckStatus();
-            return ReceiveData(length);
+            await SendCMDPacket(CMDS.CMD_PROC_READ, CMD_PROC_READ_PACKET_SIZE, pid, address, length);
+            await CheckStatus();
+            return await ReceiveDataAsync(length);
         }
 
-        public T ReadMemory<T>(int pid, ulong address) {
+        public async Task<T> ReadMemory<T>(int pid, ulong address) {
             if (typeof(T) == typeof(string)) {
                 string str = "";
                 ulong i = 0;
 
                 while (true) {
-                    byte value = ReadMemory(pid, address + i, sizeof(byte))[0];
+                    byte value = (await ReadMemory(pid, address + i, sizeof(byte)))[0];
                     if (value == 0) {
                         break;
                     }
@@ -413,10 +414,10 @@ namespace libdebug {
                 throw new NotSupportedException("byte arrays are not supported, use ReadMemory(int pid, ulong address, int size)");
             }
 
-            return (T)GetObjectFromBytes(ReadMemory(pid, address, Marshal.SizeOf(typeof(T))), typeof(T));
+            return (T)GetObjectFromBytes(await ReadMemory(pid, address, Marshal.SizeOf(typeof(T))), typeof(T));
         }
 
-        public List<ulong> ScanProcess<T>(int pid, ScanCompareType compareType, T value, T extraValue = default) {
+        public async Task<List<ulong>> ScanProcessAsync<T>(int pid, ScanCompareType compareType, T value, T extraValue = default) {
             CheckConnected();
 
             int typeLength = 0;
@@ -529,22 +530,22 @@ namespace libdebug {
                 throw new NotSupportedException("Requested scan value type is not supported! (Feed in Byte[] instead.)");
             }
             // send packet
-            SendCMDPacket(CMDS.CMD_PROC_SCAN, CMD_PROC_SCAN_PACKET_SIZE, pid, (byte)valueType, (byte)compareType, (int)(extraValue == null ? typeLength : typeLength * 2));
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_PROC_SCAN, CMD_PROC_SCAN_PACKET_SIZE, pid, (byte)valueType, (byte)compareType, (int)(extraValue == null ? typeLength : typeLength * 2));
+            await CheckStatus();
 
-            SendData(valueBuffer, typeLength);
+            await SendDataAsync(valueBuffer, typeLength);
             if (extraValueBuffer != null) {
-                SendData(extraValueBuffer, typeLength);
+                await SendDataAsync(extraValueBuffer, typeLength);
             }
 
-            CheckStatus();
+            await CheckStatus();
 
             // receive results
             int save = sock.ReceiveTimeout;
             sock.ReceiveTimeout = Int32.MaxValue;
             List<ulong> results = new List<ulong>();
             while (true) {
-                ulong result = BitConverter.ToUInt64(ReceiveData(sizeof(ulong)), 0);
+                ulong result = BitConverter.ToUInt64(await ReceiveDataAsync(sizeof(ulong)), 0);
                 if (result == 0xFFFFFFFFFFFFFFFF) {
                     break;
                 }
@@ -563,27 +564,27 @@ namespace libdebug {
         /// <param name="pid">Process ID</param>
         /// <param name="address">Memory address</param>
         /// <param name="data">Data</param>
-        public void WriteMemory(int pid, ulong address, byte[] data) {
+        public async Task WriteMemoryAsync(int pid, ulong address, byte[] data) {
             CheckConnected();
 
-            SendCMDPacket(CMDS.CMD_PROC_WRITE, CMD_PROC_WRITE_PACKET_SIZE, pid, address, data.Length);
-            CheckStatus();
-            SendData(data, data.Length);
-            CheckStatus();
+            await SendCMDPacket(CMDS.CMD_PROC_WRITE, CMD_PROC_WRITE_PACKET_SIZE, pid, address, data.Length);
+            await CheckStatus();
+            await SendDataAsync(data, data.Length);
+            await CheckStatus();
         }
 
-        public void WriteMemory<T>(int pid, ulong address, T value) {
+        public async Task WriteMemoryAsync<T>(int pid, ulong address, T value) {
             if (typeof(T) == typeof(string)) {
-                WriteMemory(pid, address, Encoding.ASCII.GetBytes((string)(object)value + (char)0x0));
+                await WriteMemoryAsync(pid, address, Encoding.ASCII.GetBytes((string)(object)value + (char)0x0));
                 return;
             }
 
             if (typeof(T) == typeof(byte[])) {
-                WriteMemory(pid, address, (byte[])(object)value);
+                await WriteMemoryAsync(pid, address, (byte[])(object)value);
                 return;
             }
 
-            WriteMemory(pid, address, GetBytesFromObject(value));
+            await WriteMemoryAsync(pid, address, GetBytesFromObject(value));
         }
     }
 }

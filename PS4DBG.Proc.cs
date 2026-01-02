@@ -148,7 +148,7 @@ namespace libdebug {
                         break;
                     }
                     case byte b: {
-                        byte[] tmp = BitConverter.GetBytes(b);
+                        byte[] tmp = BitConverter.GetBytes((Half)b);
                         Buffer.BlockCopy(tmp, 0, bytes, 0, sizeof(byte));
 
                         byte[] pad = new byte[sizeof(ulong) - sizeof(byte)];
@@ -435,18 +435,18 @@ namespace libdebug {
 
                 case sbyte sb:
                 valueType = ScanValueType.valTypeInt8;
-                valueBuffer = BitConverter.GetBytes(sb);
+                valueBuffer = BitConverter.GetBytes((Half)sb);
                 typeLength = 1;
                 if (extraValue != null)
-                    extraValueBuffer = BitConverter.GetBytes((sbyte)(object)extraValue);
+                    extraValueBuffer = BitConverter.GetBytes((Half)(sbyte)(object)extraValue);
                 break;
 
                 case byte b:
                 valueType = ScanValueType.valTypeUInt8;
-                valueBuffer = BitConverter.GetBytes(b);
+                valueBuffer = BitConverter.GetBytes((Half)b);
                 typeLength = 1;
                 if (extraValue != null)
-                    extraValueBuffer = BitConverter.GetBytes((byte)(object)extraValue);
+                    extraValueBuffer = BitConverter.GetBytes((Half)(byte)(object)extraValue);
                 break;
 
                 case short s:

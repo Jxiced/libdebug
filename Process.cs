@@ -116,6 +116,14 @@ namespace libdebug {
         }
 
         /// <summary>
+        /// Return all processes
+        /// </summary>
+        public Process[] GetAllProcesses()
+        {
+            return processes;
+        }
+
+        /// <summary>
         /// Finds a process based off name
         /// </summary>
         /// <param name="name">Process name</param>

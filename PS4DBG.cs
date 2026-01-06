@@ -356,7 +356,7 @@ namespace libdebug
         /// Find the playstation ip
         /// </summary>
         public static async Task<string> FindPlayStation(int timeout = 100, string subnet_mask = "255.255.255.0") {
-            UdpClient uc = new UdpClient();
+            using var uc = new UdpClient();
             IPEndPoint server = new IPEndPoint(IPAddress.Any, 0);
             uc.EnableBroadcast = true;
             uc.Client.ReceiveTimeout = timeout;
